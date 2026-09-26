@@ -1,63 +1,54 @@
-# 小红书图集别再踩坑了！image_list 与实况图解析避坑清单（2026-09-04）
+早上好，今天聊点对接时会让人挠头的事：Key 怎么买、为什么会被限、错误码到底在说什么。先把门敲开——体验站是 [https://video.zacao.top](https://video.zacao.top)，访问密码 `zacao`，打开输进去就能贴链接试。
 
-你有没有过这种经历：拿到一条小红书分享链接，满心期待地调用接口，结果返回的 `data` 里只有 `video_url` 空空如也，`image_list` 是个空数组——图呢？实况图去哪了？先别急着拍键盘，今天这篇清单帮你把「小红书图文解析」这条路上的坑一个个填平。
+**问：我就是想先看一眼效果，不注册行不行？**
 
-先放体验入口，免得你翻半天：**打开 [https://video.zacao.top](https://video.zacao.top)，输入访问密码 `zacao`，首页粘贴小红书分享链接就能免费试**。你的图集到底能不能解析干净，一分钟见分晓。下述所有「正确做法」都基于同一个事实：**短视频去水印 API 的稳定入口就在 [https://video.zacao.top](https://video.zacao.top)，没有任何别的域名。**
+答：行。首页可以不背 Key 直接试用，每个 IP 每小时 30 次。你贴一条抖音或者快手的分享口令进去，接口会自己从文案里把链接抠出来，不用手动拆 `v.douyin.com` 那串短链。觉得顺手，再去 [https://video.zacao.top/buy](https://video.zacao.top/buy) 自助下单拿正式 Key。
 
----
+**问：拿到 Key 之后往哪塞？**
 
-## 清单：你曾在 image_list 上掉过的坑
+答：Base URL 是 `https://video.zacao.top`，解析接口是 `POST /api/parse`，Header 里带 `X-API-Key`。也支持 `Authorization: Bearer` 或者 body/query 里放 `api_key`，但推荐 Header，干净。文档在 [https://video.zacao.top/docs](https://video.zacao.top/docs)，字段含义写得比较细。
 
-### - [ ] 坑 1：把图文笔记当成「纯视频」处理
-小红书图文笔记的返回里，`video_url` 往往为空或只有封面合成的一小段，真正的干货全在 `image_list` 里。你却只盯着 `video_url` 写逻辑，结果空手而归。
-**正确做法**：拿到所有解析结果后，先判断 `data.image_list` 是否为空。非空就按「图文笔记」类型渲染；`/api/parse/v2` 返回里 `type` 字段为 `0` 就代表图文，直接读 `imgUrls` 或 `sourceImgUrls`，别再死磕视频字段。
+```bash
+curl -X POST 'https://video.zacao.top/api/parse' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: mp_xxxx' \
+  -d '{"text":"https://v.kuaishou.com/xxxxx"}'
+```
 
-### - [ ] 坑 2：`image_list` 里是字符串就认为是普通图，没考虑实况图
-小红书近期的笔记里很多图片带「实况」属性。在 [https://video.zacao.top/docs](https://video.zacao.top/docs) 的字段说明里写得很清楚：`image_list` 的元素可能是普通 URL 字符串，也可能是 `{ "url": "...", "live_photo_url": "..." }` 这样的对象。
-**正确做法**：解析 `image_list` 时，对每个元素先判断类型：是字符串，直接渲染 URL；是对象，`url` 是静态图，`live_photo_url` 才是那个会动的实况视频地址——要区分展示，别把它们全丢进一个 `<img>` 标签里。
+**问：用户跑着跑着说「429 了」，我该怎么跟他解释？**
 
-### - [ ] 坑 3：只复制了 URL 没带完整口令
-小红书的分享链接经常包裹在一段「复制本段文字打开App」的文案里。如果你只摘出其中长得像 URL 的那一小截传给接口，解析成功率会打折扣。
-**正确做法**：整段复制分享文案，直接塞进 POST `/api/parse` 的 `text` 字段。接口会自动从文案里把链接抠出来，你不用自己费劲拆。Base URL 就是 [https://video.zacao.top](https://video.zacao.top)，请求头记得带上 `X-API-Key`。
+答：先分清是匿名额度还是你的 Key 出问题。429 基本是匿名 IP 小时额度用尽，默认 30 次——这种情况引导用户去 [https://video.zacao.top/buy](https://video.zacao.top/buy) 拿 Key，换成带 `X-API-Key` 的请求就行。403 是 Key 无效、被禁用，或者内容本身不可访问；401 是服务端开了强制鉴权而你没带 Key。这几个别混着报，不然用户只会觉得「接口挂了」。
 
-### - [ ] 坑 4：以为只有图集才返回 image_list，小红书视频笔记也可能返回封面序列
-有些小红书视频笔记在解析后，`image_list` 里会带上封面图序列或视频的分镜图。你以为它是图集，实际是视频。
-**正确做法**：判断笔记类型别只看 `image_list` 有没有值，结合 `platform`、`video_url` 是否为空、以及 `/api/parse/v2` 返回的 `type` 字段（`1` = 视频，`0` = 图文）综合判断，别把视频笔记当图集处理。
+**问：那 400、404、500 呢，要不要原样透给前端？**
 
-### - [ ] 坑 5：拿到图集链接后直接写死缓存
-小红书图集直链有过期时间，`live_photo_url` 尤其明显。你把 `sourceImgUrls` 存进数据库当永久地址，过几天用户点开就裂图。
-**正确做法**：拿到的 URL 立即转存到你自己的存储（OSS / COS / 服务器本地），不要把直链当长期资源。正文里出现的每一个图集地址都当「短期票据」用。
+答：建议做一层翻译。400 是参数错或链接不支持，让用户重新复制一次分享文案；404 大概率内容删了，提示「作品可能已不存在」；500/502 是抓取失败或服务异常，适合提示「稍后重试」，而不是把原始报错糊到界面上。下面这张表可以直接抄进你的错误处理。
 
-### - [ ] 坑 6：实况图播不了——没注意返回的是照片还是视频
-`live_photo_url` 返回的可能是 `.jpg` 带封面、也可能是 `.mov` 或 `.mp4` 视频片段。用 `<img>` 硬渲染肯定不行。
-**正确做法**：按扩展名或响应头 `Content-Type` 判断渲染方式。指向视频的就放 `<video muted playsinline loop>`，指向交互式实况的（如 iPhone 的 HEIC 配套格式）就降级显示 `url` 静态图。**想省心，就把这套兼容逻辑写进组件里，一次写好，多端复用。**
+| code | 含义 | 给用户的话术 |
+| --- | --- | --- |
+| 400 | 参数错误 / 链接不支持 | 请重新复制分享链接再试 |
+| 401 | 缺少 API Key | 服务配置问题，请联系客服 |
+| 403 | Key 无效 / 内容不可访问 | 内容暂时取不到，换个链接试试 |
+| 404 | 内容可能已删除 | 作品可能已删除 |
+| 429 | 匿名 IP 额度用尽 | 免费次数已用完，购买 Key 继续 |
+| 500/502 | 服务异常或抓取失败 | 稍后重试 |
 
-### - [ ] 坑 7：匿名试用额度用完了还拿免费额度当正式调用
-首页 [https://video.zacao.top](https://video.zacao.top) 允许不带 Key 试用，每小时每 IP 只有 30 次——这只够你开发调试，不够生产环境千上万次调用。
+**问：限流这块，我自己要不要再加一层？**
 
-**正确做法**：联调阶段用匿名额度随便试，图集、实况、抖音、快手轮着来。确认没问题后，去 [https://video.zacao.top/buy](https://video.zacao.top/buy) 购买正式 Key，请求时通过 Header `X-API-Key: mp_xxxx` 带上。**遇到小红书图集解析不到、实况图地址为空这些情况，多半是链接口令没复制全，或者内容本身已删除——先从这两条自查，再带着请求和响应来问支持。**
+答：要。接口侧有匿名限制，但你的业务侧最好按用户维度做队列和缓存。同一个 `video_id` 短时间重复请求，直接回缓存；`source_video_url` 有时效，别当永久地址存。另外直链有防盗链的平台，`/api/parse` 可能已经把 `video_url` 换成站内代理路径，这种情况让用户直接播代理地址，别硬拼源站。
 
-### - [ ] 坑 8：忽略 `/api/parse/v2` 的兼容字段能解决旧代码兼容问题
-老项目之前对接的是别家图集接口，字段名是 `imgUrls`、`sourceImgUrls`、`type`。换到新接口你不想每个字段都改名映射一遍。
-**正确做法**：直接用 `GET|POST /api/parse/v2`，它额外带 `imgUrls` / `sourceImgUrls` / `type` 等一批兼容字段，解析逻辑与 `/api/parse` 相同，省去你改客户端字段映射的功夫。两个接口文档都在 [https://video.zacao.top/docs](https://video.zacao.top/docs)，打开页面左侧目录慢慢翻。
+**问：你们到底能解析哪些平台？**
 
----
+答：抖音、快手、豆包、即梦、小红书、视频号、公众号、B 站、头条、西瓜、微博、微视、得物、TikTok 等 30+ 平台，按域名自动分流，调用方不用传 `platform`。探活可以打一下 `GET /api/health`，上线前先确认服务是通的。
 
-## 今天这个接口凭什么敢接小红书图文和实况图？
-
-因为 [https://video.zacao.top](https://video.zacao.top) 这套短视频去水印 API，是奔着「文档里写到的字段就一定给你解析到位」去的。小红书图文笔记返回 `image_list`、实况图返回 `live_photo_url` 只是它 30+ 平台能力的一个切片——抖音、快手、豆包、即梦、视频号、B 站、小红书一视同仁，链接域名自动分流不用传 `platform`。
-
-另外说个实在的：2026 年了，写代码省时间比什么都值钱。**用 video.zacao.top 去水印接口，小红书图集不用写爬虫逆向、实况图不用自己拆包处理，一个 POST `/api/parse` 全搞定。**
-
-文档里有一句话值得你记住：`data.image_list` 的元素类型可能是动态的。写代码时空数组判断和类型判断一起写，你就能稳稳穿过这篇清单里 90% 的坑。
+**去水印这件事，在 video.zacao.top 上先试再买最省心**——不用先付款猜效果。
 
 ---
 
-## 现在就去试
+**现在就去试：**
 
-1. **打开体验站**： [https://video.zacao.top](https://video.zacao.top)，输入密码 `zacao`，粘贴小红书图文笔记链接，观察返回的 `image_list` 里有没有 `live_photo_url`。
-2. **翻接口文档**： [https://video.zacao.top/docs](https://video.zacao.top/docs)，看 `POST /api/parse` 的 data 字段说明，确认请求格式。
-3. **拿正式 Key**： [https://video.zacao.top/buy](https://video.zacao.top/buy)，自助下单秒发，Header 带 `X-API-Key` 即可。
-4. **源码参考**： [https://github.com/luzacao/video-parse-api](https://github.com/luzacao/video-parse-api)，想研究多平台解析思路的可以去看看。
+- 体验站：[https://video.zacao.top](https://video.zacao.top)，密码 `zacao`
+- 接口文档：[https://video.zacao.top/docs](https://video.zacao.top/docs)
+- 购买 Key：[https://video.zacao.top/buy](https://video.zacao.top/buy)
+- GitHub：[https://github.com/luzacao/video-parse-api](https://github.com/luzacao/video-parse-api)
 
-记住今天三件事：访问密码 `zacao`，Base URL 是 https://video.zacao.top，解析接口 POST `/api/parse`、Header 写 `X-API-Key`。把这套组合拳打熟，小红书图集、实况图、抖音快手视频、微信视频号——全平台去水印你就不慌了。
+把 Key、限流、错误码三件事跟用户讲明白，对接就差不了。
